@@ -4,73 +4,101 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.university.danmot.subscriptiontracker.data.local.DatabaseProvider
-import com.university.danmot.subscriptiontracker.data.local.PriceHistoryEntity
-import com.university.danmot.subscriptiontracker.data.local.toDomain
-import com.university.danmot.subscriptiontracker.data.local.toEntity
-import com.university.danmot.subscriptiontracker.data.price.PriceSource
+import com.university.danmot.subscriptiontracker.data.repository.AuthRepository
+import com.university.danmot.subscriptiontracker.data.repository.Family
+import com.university.danmot.subscriptiontracker.data.repository.FamilyRepository
 import com.university.danmot.subscriptiontracker.data.repository.SubscriptionRepository
 import com.university.danmot.subscriptiontracker.domain.model.BillingCycle
 import com.university.danmot.subscriptiontracker.domain.model.PriceHistory
 import com.university.danmot.subscriptiontracker.domain.model.Subscription
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.time.LocalDate
-import java.util.UUID
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class SubscriptionViewModel(application: Application) : AndroidViewModel(application) {
 
     private val db = DatabaseProvider.getDatabase(application)
     private val repository = SubscriptionRepository(db.subscriptionDao(), db.priceHistoryDao())
+    private val authRepository = AuthRepository()
+    private val familyRepository = FamilyRepository()
 
-    val subscriptions: StateFlow<List<Subscription>> = repository.getAllSubscriptions()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    private val userId: String
+        get() = authRepository.currentUserId ?: "me"
+
+    val currentFamily: StateFlow<Family?> = familyRepository
+        .observeUserFamily(userId)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    private val familySubscriptions: Flow<List<Subscription>> = currentFamily.flatMapLatest { family ->
+        if (family != null) {
+            familyRepository.observeFamilySubscriptions(family.familyId)
+        } else {
+            flowOf(emptyList())
+        }
+    }
+
+    // Объединяем личные (Room) и семейные (Firestore) подписки в один список
+    val subscriptions: StateFlow<List<Subscription>> = combine(
+        repository.getSubscriptionsForOwner(userId),
+        familySubscriptions
+    ) { personal, family ->
+        (personal + family).sortedBy { it.nextPaymentDate }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     fun getSubscriptionById(id: Long): StateFlow<Subscription?> =
-        repository.getSubscriptionById(id).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+        subscriptions.map { list -> list.find { it.id == id } }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     fun getPriceHistory(subscriptionId: Long): StateFlow<List<PriceHistory>> =
-        repository.getPriceHistory(subscriptionId).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        repository.getPriceHistory(subscriptionId)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    fun addSubscription(name: String, price: Double, cycle: BillingCycle, date: String) {
+    fun addSubscription(
+        name: String,
+        price: Double,
+        cycle: BillingCycle,
+        date: String,
+        isFamily: Boolean = false
+    ) {
         viewModelScope.launch {
-            repository.insert(Subscription(0, name, price, null, "RUB", cycle, LocalDate.parse(date), UUID.randomUUID().toString()))
+            val famId = if (isFamily) currentFamily.value?.familyId else null
+            val sub = Subscription(
+                id = if (famId != null) System.currentTimeMillis() else 0L,
+                name = name,
+                price = price,
+                previousPrice = null,
+                currency = "RUB",
+                cycle = cycle,
+                nextPaymentDate = LocalDate.parse(date),
+                ownerId = userId,
+                familyId = famId
+            )
+            if (famId != null) {
+                familyRepository.addFamilySubscription(sub, famId)
+            } else {
+                repository.insert(sub)
+            }
         }
     }
 
     fun updateSubscription(subscription: Subscription) {
-        viewModelScope.launch { repository.update(subscription) }
+        viewModelScope.launch {
+            if (subscription.familyId != null) {
+                familyRepository.updateFamilySubscription(subscription)
+            } else {
+                repository.update(subscription)
+            }
+        }
     }
 
     fun deleteSubscription(subscription: Subscription) {
-        viewModelScope.launch { repository.delete(subscription) }
-    }
-
-    // НОВАЯ ФУНКЦИЯ: Прямой запуск проверки цен в обход WorkManager для тестирования
-    fun forcePriceChangeTest() {
         viewModelScope.launch {
-            val dao = db.subscriptionDao()
-            val historyDao = db.priceHistoryDao()
-            val entities = dao.getAllSubscriptions().first()
-
-            entities.forEach { entity ->
-                val sub = entity.toDomain()
-                val newPrice = PriceSource.checkPriceChange(sub)
-
-                if (newPrice != null) {
-                    // 1. Сохраняем старую цену в историю
-                    historyDao.insert(
-                        PriceHistoryEntity(
-                            subscriptionId = sub.id,
-                            price = sub.price,
-                            date = LocalDate.now().toString()
-                        )
-                    )
-                    // 2. Обновляем новую цену в основной таблице
-                    dao.update(sub.copy(previousPrice = sub.price, price = newPrice).toEntity())
-                }
+            if (subscription.familyId != null) {
+                familyRepository.deleteFamilySubscription(subscription.id)
+            } else {
+                repository.delete(subscription)
             }
         }
     }

@@ -13,15 +13,15 @@ import java.time.LocalDate
 
 class SubscriptionRepository(
     private val dao: SubscriptionDao,
-    private val historyDao: PriceHistoryDao // <-- ДОБАВИЛИ
+    private val historyDao: PriceHistoryDao
 ) {
-    fun getAllSubscriptions(): Flow<List<Subscription>> =
-        dao.getAllSubscriptions().map { it.map { e -> e.toDomain() } }
+    // Принимаем ownerId, чтобы вытягивать личные подписки только этого пользователя
+    fun getSubscriptionsForOwner(ownerId: String): Flow<List<Subscription>> =
+        dao.getSubscriptionsForOwner(ownerId).map { it.map { e -> e.toDomain() } }
 
     fun getSubscriptionById(id: Long): Flow<Subscription?> =
         dao.getSubscriptionById(id).map { it?.toDomain() }
 
-    // НОВОЕ: Получение истории цен
     fun getPriceHistory(subscriptionId: Long): Flow<List<PriceHistory>> =
         historyDao.getHistoryBySubscriptionId(subscriptionId).map { entities ->
             entities.map { e ->
@@ -38,7 +38,6 @@ class SubscriptionRepository(
     suspend fun update(subscription: Subscription) = dao.update(subscription.toEntity())
     suspend fun delete(subscription: Subscription) = dao.delete(subscription.toEntity())
 
-    // НОВОЕ: Сохранение записи в историю
     suspend fun insertPriceHistory(subscriptionId: Long, price: Double, date: LocalDate) {
         historyDao.insert(
             PriceHistoryEntity(

@@ -10,8 +10,9 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface SubscriptionDao {
-    @Query("SELECT * FROM subscriptions ORDER BY nextPaymentDate ASC")
-    fun getAllSubscriptions(): Flow<List<SubscriptionEntity>>
+    // Изменили запрос: выбираем только подписки конкретного пользователя
+    @Query("SELECT * FROM subscriptions WHERE ownerId = :ownerId ORDER BY nextPaymentDate ASC")
+    fun getSubscriptionsForOwner(ownerId: String): Flow<List<SubscriptionEntity>>
 
     @Query("SELECT * FROM subscriptions WHERE id = :id")
     fun getSubscriptionById(id: Long): Flow<SubscriptionEntity?>
@@ -27,4 +28,7 @@ interface SubscriptionDao {
 
     @Query("DELETE FROM subscriptions WHERE id = :id")
     suspend fun deleteById(id: Long)
+
+    @Query("SELECT * FROM subscriptions")
+    suspend fun getAllSubscriptionsList(): List<SubscriptionEntity>
 }
