@@ -12,9 +12,12 @@ import androidx.work.WorkerParameters
 import com.university.danmot.subscriptiontracker.MainActivity
 import com.university.danmot.subscriptiontracker.R
 import com.university.danmot.subscriptiontracker.data.local.DatabaseProvider
+import com.university.danmot.subscriptiontracker.data.local.PriceHistoryEntity
 import com.university.danmot.subscriptiontracker.data.local.toDomain
 import com.university.danmot.subscriptiontracker.data.local.toEntity
 import com.university.danmot.subscriptiontracker.data.price.PriceSource
+import com.university.danmot.subscriptiontracker.data.repository.AuthRepository
+import com.university.danmot.subscriptiontracker.data.repository.FamilyRepository
 import kotlinx.coroutines.flow.first
 import java.time.LocalDate
 
@@ -32,34 +35,60 @@ class PriceCheckWorker(
         return try {
             val db = DatabaseProvider.getDatabase(applicationContext)
             val dao = db.subscriptionDao()
-            val historyDao = db.priceHistoryDao() // <-- ПОЛУЧИЛИ DAO ИСТОРИИ
-            val entities = dao.getAllSubscriptions().first()
+            val historyDao = db.priceHistoryDao()
 
+            // 1. Проверяем личные подписки из локальной Room
+            val entities = dao.getAllSubscriptionsList()
             entities.forEach { entity ->
                 val subscription = entity.toDomain()
                 val newPrice = PriceSource.checkPriceChange(subscription)
 
                 if (newPrice != null) {
-                    // 1. Сохраняем СТАРУЮ цену в историю
                     historyDao.insert(
-                        com.university.danmot.subscriptiontracker.data.local.PriceHistoryEntity(
+                        PriceHistoryEntity(
                             subscriptionId = subscription.id,
-                            price = subscription.price, // Старая цена
+                            price = subscription.price,
                             date = LocalDate.now().toString()
                         )
                     )
-
-                    // 2. Обновляем новую цену в основной таблице
                     val updatedSubscription = subscription.copy(
                         previousPrice = subscription.price,
                         price = newPrice
                     )
                     dao.update(updatedSubscription.toEntity())
-
-                    // 3. Показываем уведомление
                     showPriceChangeNotification(subscription.name, subscription.price, newPrice)
                 }
             }
+
+            // 2. Проверяем семейные подписки из Firestore
+            val authRepo = AuthRepository()
+            val familyRepo = FamilyRepository()
+            val userId = authRepo.currentUserId
+            if (userId != null) {
+                val family = familyRepo.getUserFamilyOnce(userId)
+                if (family != null) {
+                    val familySubs = familyRepo.getFamilySubscriptionsOnce(family.familyId)
+                    familySubs.forEach { sub ->
+                        val newPrice = PriceSource.checkPriceChange(sub)
+                        if (newPrice != null) {
+                            historyDao.insert(
+                                PriceHistoryEntity(
+                                    subscriptionId = sub.id,
+                                    price = sub.price,
+                                    date = LocalDate.now().toString()
+                                )
+                            )
+                            val updatedSub = sub.copy(
+                                previousPrice = sub.price,
+                                price = newPrice
+                            )
+                            familyRepo.updateFamilySubscription(updatedSub)
+                            showPriceChangeNotification(sub.name, sub.price, newPrice)
+                        }
+                    }
+                }
+            }
+
             Result.success()
         } catch (e: Exception) {
             Result.retry()

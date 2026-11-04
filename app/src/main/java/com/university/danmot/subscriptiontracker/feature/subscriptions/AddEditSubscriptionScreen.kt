@@ -25,18 +25,22 @@ fun AddEditSubscriptionScreen(
     onNavigateBack: () -> Unit,
     viewModel: SubscriptionViewModel = viewModel()
 ) {
+    val currentFamily by viewModel.currentFamily.collectAsState()
+
     var name by remember { mutableStateOf("") }
     var priceText by remember { mutableStateOf("") }
     var date by remember { mutableStateOf("") }
     var cycle by remember { mutableStateOf(BillingCycle.MONTHLY) }
+    var isFamilySub by remember { mutableStateOf(false) }
+    var existingOwnerId by remember { mutableStateOf("me") }
+    var existingFamilyId by remember { mutableStateOf<String?>(null) }
+
     var isFormValid by remember { mutableStateOf(false) }
     var isLoading by remember { mutableStateOf(true) }
 
-    // Состояние для календаря
     var showDatePicker by remember { mutableStateOf(false) }
     val datePickerState = rememberDatePickerState()
 
-    // Если это редактирование, загружаем данные
     LaunchedEffect(subscriptionId) {
         if (subscriptionId != null) {
             viewModel.getSubscriptionById(subscriptionId).collect { subscription ->
@@ -45,6 +49,9 @@ fun AddEditSubscriptionScreen(
                     priceText = subscription.price.toString()
                     date = subscription.nextPaymentDate.toString()
                     cycle = subscription.cycle
+                    isFamilySub = subscription.familyId != null
+                    existingOwnerId = subscription.ownerId
+                    existingFamilyId = subscription.familyId
                     isLoading = false
                 }
             }
@@ -105,6 +112,28 @@ fun AddEditSubscriptionScreen(
                 )
 
                 Text(
+                    text = "Тип подписки",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = !isFamilySub,
+                        onClick = { isFamilySub = false },
+                        label = { Text("👤 Личная") }
+                    )
+                    FilterChip(
+                        selected = isFamilySub,
+                        onClick = {
+                            if (currentFamily != null) isFamilySub = true
+                        },
+                        enabled = currentFamily != null,
+                        label = {
+                            Text(if (currentFamily != null) "👨‍👩‍👧 Семейная" else "👨‍👩‍👧 Семейная (нет семьи)")
+                        }
+                    )
+                }
+
+                Text(
                     text = "Период оплаты",
                     style = MaterialTheme.typography.bodyMedium
                 )
@@ -118,10 +147,9 @@ fun AddEditSubscriptionScreen(
                     }
                 }
 
-                // НОВОЕ: Поле даты с иконкой календаря
                 OutlinedTextField(
                     value = date,
-                    onValueChange = { }, // Поле только для чтения, дата выбирается через календарь
+                    onValueChange = { },
                     label = { Text("Дата следующей оплаты") },
                     readOnly = true,
                     trailingIcon = {
@@ -141,8 +169,9 @@ fun AddEditSubscriptionScreen(
                     onClick = {
                         val price = priceText.toDoubleOrNull() ?: 0.0
                         if (subscriptionId == null) {
-                            viewModel.addSubscription(name, price, cycle, date)
+                            viewModel.addSubscription(name, price, cycle, date, isFamilySub)
                         } else {
+                            val targetFamilyId = if (isFamilySub) (existingFamilyId ?: currentFamily?.familyId) else null
                             viewModel.updateSubscription(
                                 Subscription(
                                     id = subscriptionId,
@@ -151,7 +180,8 @@ fun AddEditSubscriptionScreen(
                                     currency = "RUB",
                                     cycle = cycle,
                                     nextPaymentDate = LocalDate.parse(date),
-                                    ownerId = "me"
+                                    ownerId = existingOwnerId,
+                                    familyId = targetFamilyId
                                 )
                             )
                         }
@@ -166,14 +196,12 @@ fun AddEditSubscriptionScreen(
         }
     }
 
-    // НОВОЕ: Диалоговое окно календаря
     if (showDatePicker) {
         DatePickerDialog(
             onDismissRequest = { showDatePicker = false },
             confirmButton = {
                 TextButton(onClick = {
                     datePickerState.selectedDateMillis?.let { millis ->
-                        // Конвертируем миллисекунды в LocalDate и форматируем в строку (ГГГГ-ММ-ДД)
                         val localDate = Instant.ofEpochMilli(millis)
                             .atZone(ZoneId.systemDefault())
                             .toLocalDate()

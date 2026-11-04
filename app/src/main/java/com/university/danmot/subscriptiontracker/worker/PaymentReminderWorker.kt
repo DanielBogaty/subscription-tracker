@@ -30,7 +30,7 @@ class PaymentReminderWorker(
     override suspend fun doWork(): Result {
         return try {
             val dao = DatabaseProvider.getDatabase(applicationContext).subscriptionDao()
-            val entities = dao.getAllSubscriptions().first()
+            val entities = dao.getAllSubscriptionsList()
             val today = LocalDate.now()
 
             // Находим подписки, у которых следующая оплата в ближайшие 3 дня

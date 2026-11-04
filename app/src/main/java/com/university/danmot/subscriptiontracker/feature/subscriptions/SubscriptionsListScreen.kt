@@ -1,17 +1,15 @@
 package com.university.danmot.subscriptiontracker.feature.subscriptions
 
-import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.university.danmot.subscriptiontracker.domain.model.Subscription
@@ -22,24 +20,23 @@ import java.util.Locale
 fun SubscriptionsListScreen(
     onNavigateToAdd: () -> Unit,
     onNavigateToDetail: (Long) -> Unit,
+    onLogout: () -> Unit = {},
     viewModel: SubscriptionViewModel = viewModel()
 ) {
     val subscriptions by viewModel.subscriptions.collectAsState()
-    val context = LocalContext.current
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Мои подписки") },
                 actions = {
-                    IconButton(onClick = {
-                        viewModel.forcePriceChangeTest()
-                        Toast.makeText(context, "Проверка цен запущена!", Toast.LENGTH_SHORT).show()
-                    }) {
+                    TextButton(onClick = onLogout) {
                         Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = "Тест изменения цены"
+                            imageVector = Icons.AutoMirrored.Filled.ExitToApp,
+                            contentDescription = "Выйти"
                         )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Выйти")
                     }
                 }
             )
@@ -74,7 +71,7 @@ fun SubscriptionsListScreen(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(subscriptions) { subscription ->
+                items(subscriptions, key = { "${it.familyId ?: "local"}_${it.id}" }) { subscription ->
                     SubscriptionCard(
                         subscription = subscription,
                         onClick = { onNavigateToDetail(subscription.id) }
@@ -90,8 +87,8 @@ fun SubscriptionCard(
     subscription: Subscription,
     onClick: () -> Unit
 ) {
-    // Форматируем цену: 2 знака после запятой
     val formattedPrice = String.format(Locale.US, "%.2f", subscription.price)
+    val typeBadge = if (subscription.familyId != null) "👨‍👩‍👧 Семейная" else "👤 Личная"
 
     Card(
         modifier = Modifier
@@ -112,7 +109,7 @@ fun SubscriptionCard(
                     style = MaterialTheme.typography.titleMedium
                 )
                 Text(
-                    text = "Следующая оплата: ${subscription.nextPaymentDate}",
+                    text = "$typeBadge • Следующая оплата: ${subscription.nextPaymentDate}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
