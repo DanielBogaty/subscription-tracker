@@ -14,7 +14,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.university.danmot.subscriptiontracker.domain.model.PriceHistory
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -27,8 +26,21 @@ fun SubscriptionDetailScreen(
 ) {
     val subscription by viewModel.getSubscriptionById(subscriptionId).collectAsState()
     val priceHistory by viewModel.getPriceHistory(subscriptionId).collectAsState()
+    val currentFamily by viewModel.currentFamily.collectAsState()
 
     var showDeleteDialog by remember { mutableStateOf(false) }
+
+    // Проверяем права: личную подписку может менять сам владелец, а семейную — только глава семьи
+    val canModify = remember(subscription, currentFamily, viewModel.userId) {
+        val sub = subscription
+        if (sub == null) {
+            false
+        } else if (sub.familyId != null) {
+            currentFamily?.ownerId == viewModel.userId
+        } else {
+            true
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -40,32 +52,47 @@ fun SubscriptionDetailScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { onNavigateToEdit(subscriptionId) }) {
-                        Icon(Icons.Default.Edit, contentDescription = "Редактировать")
-                    }
-                    IconButton(onClick = { showDeleteDialog = true }) {
-                        Icon(Icons.Default.Delete, contentDescription = "Удалить", tint = MaterialTheme.colorScheme.error)
+                    if (canModify) {
+                        IconButton(onClick = { onNavigateToEdit(subscriptionId) }) {
+                            Icon(Icons.Default.Edit, contentDescription = "Редактировать")
+                        }
+                        IconButton(onClick = { showDeleteDialog = true }) {
+                            Icon(
+                                Icons.Default.Delete,
+                                contentDescription = "Удалить",
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        }
                     }
                 }
             )
         }
     ) { paddingValues ->
         if (subscription == null) {
-            Box(modifier = Modifier.fillMaxSize().padding(paddingValues), contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues),
+                contentAlignment = Alignment.Center
+            ) {
                 CircularProgressIndicator()
             }
         } else {
             LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(paddingValues),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues),
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 item {
                     Card(modifier = Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation()) {
-                        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
                             InfoRow(label = "Название", value = subscription!!.name)
 
-                            // Форматируем цену
                             val currentPrice = String.format(Locale.US, "%.2f", subscription!!.price)
                             InfoRow(label = "Текущая цена", value = "$currentPrice ${subscription!!.currency}")
 
@@ -98,14 +125,15 @@ fun SubscriptionDetailScreen(
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                         ) {
                             Row(
-                                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Text(
                                     text = historyItem.date.toString(),
                                     style = MaterialTheme.typography.bodyMedium
                                 )
-                                // Форматируем цену в истории
                                 val historyPrice = String.format(Locale.US, "%.2f", historyItem.price)
                                 Text(
                                     text = "$historyPrice ₽",
@@ -119,18 +147,32 @@ fun SubscriptionDetailScreen(
 
                 item {
                     Spacer(modifier = Modifier.height(16.dp))
-                    Button(
-                        onClick = { onNavigateToEdit(subscriptionId) },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Редактировать")
+                    if (canModify) {
+                        Button(
+                            onClick = { onNavigateToEdit(subscriptionId) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Редактировать")
+                        }
+                    } else {
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = "👨‍👩‍👧 Это семейная подписка. Изменять или удалять её может только глава семьи.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(12.dp)
+                            )
+                        }
                     }
                 }
             }
         }
     }
 
-    if (showDeleteDialog) {
+    if (showDeleteDialog && canModify) {
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
             title = { Text("Удалить подписку?") },

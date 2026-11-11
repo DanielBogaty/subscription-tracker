@@ -24,7 +24,7 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
     private val authRepository = AuthRepository()
     private val familyRepository = FamilyRepository()
 
-    private val userId: String
+    val userId: String
         get() = authRepository.currentUserId ?: "me"
 
     val currentFamily: StateFlow<Family?> = familyRepository
