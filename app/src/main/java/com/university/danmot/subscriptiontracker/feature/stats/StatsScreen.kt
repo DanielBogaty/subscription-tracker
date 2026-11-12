@@ -9,6 +9,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.university.danmot.subscriptiontracker.domain.model.Subscription
 import com.university.danmot.subscriptiontracker.feature.subscriptions.SubscriptionViewModel
 import java.util.Locale
 
@@ -20,10 +21,21 @@ fun StatsScreen(
     val subscriptions by viewModel.subscriptions.collectAsState()
     val currentFamily by viewModel.currentFamily.collectAsState()
 
-    val totalMonthly = subscriptions.sumOf { it.monthlyCost() }
-    val top3 = subscriptions.sortedByDescending { it.monthlyCost() }.take(3)
-    val familySubs = subscriptions.filter { it.familyId != null }
     val membersCount = (currentFamily?.members?.size ?: 1).coerceAtLeast(1)
+
+    // Считаем стоимость подписки персонально для текущего пользователя:
+    // личная = 100% цены, семейная = цена / количество участников семьи
+    fun userMonthlyCost(sub: Subscription): Double {
+        return if (sub.familyId != null) {
+            sub.monthlyCost() / membersCount
+        } else {
+            sub.monthlyCost()
+        }
+    }
+
+    val totalMonthly = subscriptions.sumOf { userMonthlyCost(it) }
+    val top3 = subscriptions.sortedByDescending { userMonthlyCost(it) }.take(3)
+    val familySubs = subscriptions.filter { it.familyId != null }
 
     Scaffold(
         topBar = {
@@ -37,7 +49,7 @@ fun StatsScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // 1. Общая сумма трат в месяц
+            // 1. Общая сумма трат в месяц (с учетом доли в семейных)
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -58,7 +70,7 @@ fun StatsScreen(
                 }
             }
 
-            // 2. Топ-3 самых дорогих подписки
+            // 2. Топ-3 самых дорогих подписки (по доле пользователя)
             item {
                 Text("🏆 Топ-3 самых дорогих подписки", style = MaterialTheme.typography.titleMedium)
             }
@@ -68,6 +80,7 @@ fun StatsScreen(
                 }
             } else {
                 items(top3) { sub ->
+                    val costForUser = userMonthlyCost(sub)
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Row(
                             modifier = Modifier
@@ -78,7 +91,7 @@ fun StatsScreen(
                             val badge = if (sub.familyId != null) "👨‍👩‍👧 " else "👤 "
                             Text("$badge${sub.name}", style = MaterialTheme.typography.bodyLarge)
                             Text(
-                                String.format(Locale.US, "%.2f RUB/мес", sub.monthlyCost()),
+                                String.format(Locale.US, "%.2f RUB/мес", costForUser),
                                 style = MaterialTheme.typography.titleSmall,
                                 color = MaterialTheme.colorScheme.primary
                             )
@@ -87,13 +100,14 @@ fun StatsScreen(
                 }
             }
 
-            // 3. Разбивка по подпискам с прогресс-барами
+            // 3. Разбивка по подпискам с прогресс-барами (по доле пользователя)
             item {
                 Spacer(modifier = Modifier.height(8.dp))
                 Text("📈 Доля в ежемесячных расходах", style = MaterialTheme.typography.titleMedium)
             }
             items(subscriptions) { sub ->
-                val fraction = if (totalMonthly > 0) (sub.monthlyCost() / totalMonthly).toFloat() else 0f
+                val costForUser = userMonthlyCost(sub)
+                val fraction = if (totalMonthly > 0) (costForUser / totalMonthly).toFloat() else 0f
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -101,7 +115,7 @@ fun StatsScreen(
                     ) {
                         Text(sub.name, style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            String.format(Locale.US, "%.0f%% (%.2f RUB)", fraction * 100, sub.monthlyCost()),
+                            String.format(Locale.US, "%.0f%% (%.2f RUB)", fraction * 100, costForUser),
                             style = MaterialTheme.typography.bodySmall
                         )
                     }

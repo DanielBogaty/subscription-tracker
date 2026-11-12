@@ -26,6 +26,10 @@ fun AddEditSubscriptionScreen(
     viewModel: SubscriptionViewModel = viewModel()
 ) {
     val currentFamily by viewModel.currentFamily.collectAsState()
+    val currentUserId = viewModel.userId
+
+    // Проверяем, является ли текущий пользователь главой семьи
+    val isFamilyOwner = currentFamily != null && currentFamily?.ownerId == currentUserId
 
     var name by remember { mutableStateOf("") }
     var priceText by remember { mutableStateOf("") }
@@ -60,8 +64,18 @@ fun AddEditSubscriptionScreen(
         }
     }
 
-    LaunchedEffect(name, priceText, date) {
-        isFormValid = name.isNotBlank() && priceText.toDoubleOrNull() != null && date.isNotBlank()
+    // Если это редактирование уже существующей семейной подписки, но пользователь НЕ глава семьи — блокируем редактирование
+    val canEditThisSubscription = if (subscriptionId != null && existingFamilyId != null) {
+        isFamilyOwner
+    } else {
+        true
+    }
+
+    LaunchedEffect(name, priceText, date, canEditThisSubscription) {
+        isFormValid = canEditThisSubscription &&
+                name.isNotBlank() &&
+                priceText.toDoubleOrNull() != null &&
+                date.isNotBlank()
     }
 
     Scaffold(
@@ -96,16 +110,32 @@ fun AddEditSubscriptionScreen(
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
+                if (!canEditThisSubscription) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "Только глава семьи может редактировать семейные подписки.",
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(12.dp)
+                        )
+                    }
+                }
+
                 OutlinedTextField(
                     value = name,
-                    onValueChange = { name = it },
+                    onValueChange = { if (canEditThisSubscription) name = it },
+                    readOnly = !canEditThisSubscription,
                     label = { Text("Название (например, Яндекс Плюс)") },
                     modifier = Modifier.fillMaxWidth()
                 )
 
                 OutlinedTextField(
                     value = priceText,
-                    onValueChange = { priceText = it },
+                    onValueChange = { if (canEditThisSubscription) priceText = it },
+                    readOnly = !canEditThisSubscription,
                     label = { Text("Цена") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.fillMaxWidth()
@@ -118,17 +148,23 @@ fun AddEditSubscriptionScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
                         selected = !isFamilySub,
-                        onClick = { isFamilySub = false },
+                        onClick = { if (canEditThisSubscription) isFamilySub = false },
+                        enabled = canEditThisSubscription,
                         label = { Text("👤 Личная") }
                     )
                     FilterChip(
                         selected = isFamilySub,
                         onClick = {
-                            if (currentFamily != null) isFamilySub = true
+                            if (isFamilyOwner && canEditThisSubscription) isFamilySub = true
                         },
-                        enabled = currentFamily != null,
+                        enabled = isFamilyOwner && canEditThisSubscription,
                         label = {
-                            Text(if (currentFamily != null) "👨‍👩‍👧 Семейная" else "👨‍👩‍👧 Семейная (нет семьи)")
+                            val labelText = when {
+                                currentFamily == null -> "👨‍👩‍👧 Семейная (нет семьи)"
+                                !isFamilyOwner -> "👨‍👩‍👧 Семейная (только глава)"
+                                else -> "👨‍👩‍👧 Семейная"
+                            }
+                            Text(labelText)
                         }
                     )
                 }
@@ -141,7 +177,8 @@ fun AddEditSubscriptionScreen(
                     BillingCycle.entries.forEach { c ->
                         FilterChip(
                             selected = cycle == c,
-                            onClick = { cycle = c },
+                            onClick = { if (canEditThisSubscription) cycle = c },
+                            enabled = canEditThisSubscription,
                             label = { Text(c.label) }
                         )
                     }
@@ -153,7 +190,10 @@ fun AddEditSubscriptionScreen(
                     label = { Text("Дата следующей оплаты") },
                     readOnly = true,
                     trailingIcon = {
-                        IconButton(onClick = { showDatePicker = true }) {
+                        IconButton(
+                            onClick = { if (canEditThisSubscription) showDatePicker = true },
+                            enabled = canEditThisSubscription
+                        ) {
                             Icon(
                                 imageVector = Icons.Default.DateRange,
                                 contentDescription = "Выбрать дату"
@@ -165,32 +205,34 @@ fun AddEditSubscriptionScreen(
 
                 Spacer(modifier = Modifier.weight(1f))
 
-                Button(
-                    onClick = {
-                        val price = priceText.toDoubleOrNull() ?: 0.0
-                        if (subscriptionId == null) {
-                            viewModel.addSubscription(name, price, cycle, date, isFamilySub)
-                        } else {
-                            val targetFamilyId = if (isFamilySub) (existingFamilyId ?: currentFamily?.familyId) else null
-                            viewModel.updateSubscription(
-                                Subscription(
-                                    id = subscriptionId,
-                                    name = name,
-                                    price = price,
-                                    currency = "RUB",
-                                    cycle = cycle,
-                                    nextPaymentDate = LocalDate.parse(date),
-                                    ownerId = existingOwnerId,
-                                    familyId = targetFamilyId
+                if (canEditThisSubscription) {
+                    Button(
+                        onClick = {
+                            val price = priceText.toDoubleOrNull() ?: 0.0
+                            if (subscriptionId == null) {
+                                viewModel.addSubscription(name, price, cycle, date, isFamilySub)
+                            } else {
+                                val targetFamilyId = if (isFamilySub) (existingFamilyId ?: currentFamily?.familyId) else null
+                                viewModel.updateSubscription(
+                                    Subscription(
+                                        id = subscriptionId,
+                                        name = name,
+                                        price = price,
+                                        currency = "RUB",
+                                        cycle = cycle,
+                                        nextPaymentDate = LocalDate.parse(date),
+                                        ownerId = existingOwnerId,
+                                        familyId = targetFamilyId
+                                    )
                                 )
-                            )
-                        }
-                        onNavigateBack()
-                    },
-                    enabled = isFormValid,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(if (subscriptionId == null) "Сохранить" else "Обновить")
+                            }
+                            onNavigateBack()
+                        },
+                        enabled = isFormValid,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(if (subscriptionId == null) "Сохранить" else "Обновить")
+                    }
                 }
             }
         }
